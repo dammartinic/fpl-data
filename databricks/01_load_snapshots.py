@@ -12,16 +12,83 @@
 # MAGIC Schedule this as a Databricks job **once a day, a couple of hours after
 # MAGIC the Action runs**. One job, one run per day — Free Edition has a daily
 # MAGIC compute quota and blowing it shuts your warehouse down until tomorrow.
+# MAGIC
+# MAGIC ⚠️ **When you create that job, set its source to Git, not Workspace.**
+# MAGIC A workspace Git folder is a frozen copy that never updates itself, so the
+# MAGIC job would reprocess the same day forever. A Git-sourced job checks out the
+# MAGIC branch afresh at the start of every run. See "Keeping the data fresh" in
+# MAGIC the README.
 
 # COMMAND ----------
 
 CATALOG = "workspace"      # Free Edition default catalog
 SCHEMA = "fpl"
 
-# Path to this Git folder in the workspace. Adjust <you@example.com> and the
-# repo name. Easiest way to get it right: right-click the repo in the sidebar
-# and choose "Copy path", then strip the trailing notebook name.
-REPO_PATH = "/Workspace/Users/<you@example.com>/fpl-data"
+# ---------------------------------------------------------------------------
+# Where does this repo live?
+#
+# You do NOT need to edit this. The notebook finds itself by walking up from its
+# own directory until it sees the repo's `data` and `scripts` folders.
+#
+# This matters because the answer changes depending on how you run it:
+#   - Git folder in the workspace  -> /Workspace/Users/you@.../fpl-data
+#   - Job with a Git source        -> a temporary checkout with a random name
+# Hardcoding the path breaks the second one, which is the setup you actually want.
+#
+# Override only if auto-detection fails:  REPO_PATH_OVERRIDE = "/Workspace/..."
+# ---------------------------------------------------------------------------
+REPO_PATH_OVERRIDE = ""
+
+import os
+from pathlib import Path
+
+
+def find_repo_root() -> Path:
+    if REPO_PATH_OVERRIDE:
+        return Path(REPO_PATH_OVERRIDE)
+
+    candidates = []
+
+    # Where the notebook is executing from
+    here = Path(os.getcwd())
+    candidates += [here, *list(here.parents)[:5]]
+
+    # Fall back to the notebook's registered path, if the context exposes it
+    try:
+        ctx = (dbutils.notebook.entry_point.getDbutils()
+               .notebook().getContext())
+        nb = Path("/Workspace" + ctx.notebookPath().get())
+        candidates += [nb.parent, *list(nb.parents)[:5]]
+    except Exception:
+        pass
+
+    for c in candidates:
+        if (c / "data").is_dir() and (c / "scripts").is_dir():
+            return c
+
+    raise RuntimeError(
+        "Could not locate the repo root.\n"
+        f"Looked in: {[str(c) for c in candidates]}\n"
+        "Set REPO_PATH_OVERRIDE at the top of this notebook. To find the value: "
+        "right-click the fpl-data folder in the Databricks sidebar -> Copy path."
+    )
+
+
+REPO_PATH = str(find_repo_root())
+print(f"repo root: {REPO_PATH}")
+
+# Prove the data is actually there and show how fresh it is. If the newest date
+# below is not today's, your job is reading a stale copy of the repo -- see
+# "Keeping the data fresh" in the README.
+_snaps = sorted(os.listdir(os.path.join(REPO_PATH, "data", "player_daily"))) \
+    if os.path.isdir(os.path.join(REPO_PATH, "data", "player_daily")) else []
+print(f"snapshots available: {len(_snaps)}")
+if _snaps:
+    print(f"oldest: {_snaps[0]}")
+    print(f"newest: {_snaps[-1]}   <-- should be today or yesterday")
+else:
+    print("NO SNAPSHOTS FOUND. Has the GitHub Action run yet? Check the "
+          "Actions tab on GitHub for a green tick.")
 
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
 spark.sql(f"USE {CATALOG}.{SCHEMA}")
