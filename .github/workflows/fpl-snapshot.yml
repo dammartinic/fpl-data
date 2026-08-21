@@ -1,0 +1,66 @@
+name: FPL daily snapshot
+
+on:
+  schedule:
+    # 02:30 UTC daily. FPL price changes settle around 01:30 UK time, so this
+    # is safely after them in both BST and GMT -- no need to shift in October.
+    - cron: "30 2 * * *"
+  workflow_dispatch: {}          # lets you run it by hand from the Actions tab
+
+permissions:
+  contents: write                # required so the job can commit the snapshot
+
+concurrency:
+  group: fpl-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch FPL snapshot
+        env:
+          FPL_ENTRY_ID: ${{ vars.FPL_ENTRY_ID }}
+        run: python scripts/fetch_fpl.py
+
+      - name: Commit snapshot
+        run: |
+          git config user.name  "fpl-snapshot-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "FPL snapshot $(date -u +'%Y-%m-%d')"
+            # Rebase in case you pushed manually while the job was running.
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### FPL snapshot $(date -u +'%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "| table | partitions on disk |"
+            echo "|---|---|"
+            for d in data/*/; do
+              name=$(basename "$d")
+              [ "$name" = "raw" ] && continue
+              echo "| $name | $(find "$d" -name '*.parquet' | wc -l) |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
