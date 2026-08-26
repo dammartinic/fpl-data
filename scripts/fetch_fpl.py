@@ -188,6 +188,20 @@ def main() -> int:
                 write_partition(pk, "my_picks", snapshot_date)
         else:
             print("  no current gameweek yet -- skipping picks")
+         
+        # Transfer history. Full log every run -- cheap, and the source
+        # is already the complete history, so there's nothing to append to.
+        transfers = get(f"entry/{ENTRY_ID}/transfers/", allow_404=True)
+        if transfers:
+            tr = pd.json_normalize(transfers)
+            if not tr.empty:
+                tr["entry_id"] = ENTRY_ID
+                tr["snapshot_ts"] = snapshot_ts
+                # element_in_cost / element_out_cost are in tenths, same as now_cost
+                for col in ("element_in_cost", "element_out_cost"):
+                    if col in tr.columns:
+                        tr[f"{col.replace('_cost', '')}_m"] = tr[col] / 10.0
+                write_partition(tr, "my_transfers", snapshot_date)
     else:
         print("FPL_ENTRY_ID not set -- skipping my-team tables")
 
