@@ -210,18 +210,25 @@ for table in ["player_daily", "fixtures", "teams_daily", "events_daily",
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC CREATE OR REPLACE TABLE silver_my_transfers AS
-# MAGIC SELECT
-# MAGIC   entry_id,
-# MAGIC   event                       AS gameweek,
-# MAGIC   element_in                  AS player_in_id,
-# MAGIC   element_out                 AS player_out_id,
-# MAGIC   element_in_m                AS price_in,
-# MAGIC   element_out_m                AS price_out,
-# MAGIC   time                        AS transferred_at,
-# MAGIC   snapshot_ts
-# MAGIC FROM bronze_my_transfers;
+tables = [t.name for t in spark.catalog.listTables("workspace.fpl")]
+
+if "bronze_my_transfers" in tables:
+    spark.sql("""
+        CREATE OR REPLACE TABLE silver_my_transfers AS
+        SELECT
+          entry_id,
+          event                       AS gameweek,
+          element_in                  AS player_in_id,
+          element_out                 AS player_out_id,
+          element_in_m                AS price_in,
+          element_out_m               AS price_out,
+          time                        AS transferred_at,
+          snapshot_ts
+        FROM bronze_my_transfers
+    """)
+    print("silver_my_transfers: created")
+else:
+    print("bronze_my_transfers not found yet -- no transfers made this season. Skipping.")
 
 # COMMAND ----------
 
@@ -292,21 +299,28 @@ for table in ["player_daily", "fixtures", "teams_daily", "events_daily",
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC CREATE OR REPLACE VIEW gold_my_transfer_log AS
-# MAGIC SELECT
-# MAGIC   t.gameweek,
-# MAGIC   p_out.web_name AS sold,
-# MAGIC   p_in.web_name  AS bought,
-# MAGIC   t.price_out,
-# MAGIC   t.price_in,
-# MAGIC   t.transferred_at
-# MAGIC FROM silver_my_transfers t
-# MAGIC LEFT JOIN (SELECT DISTINCT id AS player_id, web_name FROM bronze_player_daily) p_out
-# MAGIC   ON t.player_out_id = p_out.player_id
-# MAGIC LEFT JOIN (SELECT DISTINCT id AS player_id, web_name FROM bronze_player_daily) p_in
-# MAGIC   ON t.player_in_id = p_in.player_id
-# MAGIC ORDER BY t.gameweek DESC;
+tables = [t.name for t in spark.catalog.listTables("workspace.fpl")]
+
+if "silver_my_transfers" in tables:
+    spark.sql("""
+        CREATE OR REPLACE VIEW gold_my_transfer_log AS
+        SELECT
+          t.gameweek,
+          p_out.web_name AS sold,
+          p_in.web_name  AS bought,
+          t.price_out,
+          t.price_in,
+          t.transferred_at
+        FROM silver_my_transfers t
+        LEFT JOIN (SELECT DISTINCT id AS player_id, web_name FROM bronze_player_daily) p_out
+          ON t.player_out_id = p_out.player_id
+        LEFT JOIN (SELECT DISTINCT id AS player_id, web_name FROM bronze_player_daily) p_in
+          ON t.player_in_id = p_in.player_id
+        ORDER BY t.gameweek DESC
+    """)
+    print("gold_my_transfer_log: created")
+else:
+    print("silver_my_transfers not found yet -- skipping gold view")
 
 # COMMAND ----------
 
